@@ -40,7 +40,7 @@ func FromFile(f string) (*Config, error) {
 	}
 
 	cfg := new(Config)
-	err = toml.Unmarshal(b, &cfg)
+	err = toml.Unmarshal(b, cfg)
 	if err != nil {
 		return nil, err
 	}

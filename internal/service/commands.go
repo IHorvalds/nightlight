@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sync"
 	"text/template"
 	"time"
 
@@ -41,7 +42,7 @@ func readConfig(cf string) (*Config, error) {
 }
 
 const (
-	geocodingURL     = "https://api.openweathermap.org/geo/1.0/direct?q={{.Location}}&limit=1&appid={.AppID}"
+	geocodingURL     = "https://api.openweathermap.org/geo/1.0/direct?q={{.Location}}&limit=1&appid={{.AppID}}"
 	sunriseSunsetAPI = "https://api.sunrise-sunset.org/json?lat={{.Lat}}&lng={{.Long}}&date={{.Date}}&tzid={{.Tzid}}"
 )
 
@@ -70,8 +71,9 @@ func getCoordinatesLocation(loc locationName, apiKey string) (coordinates, error
 		return coordinates{0, 0}, err
 	}
 
-	client := http.Client{}
-	r, err := client.Get(url.String())
+	log.Printf("Trying %s", url.String())
+
+	r, err := http.Get(url.String())
 	if err != nil {
 		return coordinates{0, 0}, err
 	}
@@ -85,16 +87,16 @@ func getCoordinatesLocation(loc locationName, apiKey string) (coordinates, error
 		return coordinates{0, 0}, err
 	}
 
-	lat, ok := jsonquery.FindOne(doc, "/0/lat").Value().(float32)
+	lat, ok := jsonquery.FindOne(doc, "*[1]/lat").Value().(float64)
 	if !ok {
 		return coordinates{0, 0}, errors.New("invalid JSON response from OpenWeatherMap")
 	}
-	lon, ok := jsonquery.FindOne(doc, "/0/lon").Value().(float32)
+	lon, ok := jsonquery.FindOne(doc, "*[1]/lon").Value().(float64)
 	if !ok {
 		return coordinates{0, 0}, errors.New("invalid JSON response from OpenWeatherMap")
 	}
 
-	return coordinates{lat, lon}, nil
+	return coordinates{float32(lat), float32(lon)}, nil
 }
 
 type theme int
@@ -198,6 +200,9 @@ func getNextImportantTime(t time.Time, coord *coordinates) timeAndTheme {
 		log.Println(err)
 		return nextDefaultTime(t)
 	}
+	firstLight = firstLight.AddDate(t.Year(), int(t.Month()), t.Day())
+
+	log.Printf("First light will be at %s", firstLight.Format(time.DateTime))
 
 	if t.Before(firstLight) {
 		return timeAndTheme{firstLight, dark}
@@ -208,6 +213,9 @@ func getNextImportantTime(t time.Time, coord *coordinates) timeAndTheme {
 		log.Println(err)
 		return nextDefaultTime(t)
 	}
+	lastLight = lastLight.AddDate(t.Year(), int(t.Month()), t.Day())
+
+	log.Printf("Last light will be %s", lastLight.Format(time.DateTime))
 	if t.Before(lastLight) {
 		return timeAndTheme{lastLight, light}
 	}
@@ -237,11 +245,13 @@ func getNextImportantTime(t time.Time, coord *coordinates) timeAndTheme {
 		log.Println(err)
 		return timeAndTheme{firstLight.AddDate(0, 0, 1), dark}
 	}
+	firstNextLight = firstNextLight.AddDate(t.Year(), int(t.Month()), t.Day()+1)
 
 	return timeAndTheme{firstNextLight, dark}
 }
 
-func RunService(cf string, stopChan chan struct{}) {
+func RunService(cf string, stopChan chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
 	prevLoc := ""
 	coord := coordinates{}
 
@@ -269,14 +279,16 @@ serviceLoop:
 			applyTheme(cfg.NightTheme)
 		}
 
-		sleepch := make(chan struct{})
+		log.Printf("Next time theme will change %s", tt.start.Format(time.DateTime))
+
+		sleepCh := make(chan struct{})
 		go func() {
 			time.Sleep(time.Until(tt.start))
-			sleepch <- struct{}{}
+			sleepCh <- struct{}{}
 		}()
 
 		select {
-		case <-sleepch:
+		case <-sleepCh:
 			continue
 		case <-stopChan:
 			fmt.Println("Stopping service")
