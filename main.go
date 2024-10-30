@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"nightlight/internal/service"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path"
 
@@ -47,29 +49,14 @@ func deletePidFile() error {
 	return nil
 }
 
-func main() {
-	homeDir, err := os.UserHomeDir()
+func run(cfgFile string) error {
+	cfg, err := service.FromFile(cfgFile)
 	if err != nil {
-		homeDir = "/usr/local"
-	} else {
-		homeDir = path.Join(homeDir, ".config")
-	}
-
-	cfgFileArg := flag.String("config", path.Join(homeDir, "nightlight.toml"), "--config=[path to config file]")
-
-	flag.Parse()
-
-	if *cfgFileArg == "" {
-		log.Fatal("No config file specified")
-	}
-
-	cfg, err := service.FromFile(*cfgFileArg)
-	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	if !cfg.ValidateConfig() {
-		log.Fatal("Invalid config")
+		return errors.New("invalid configuration")
 	}
 
 	stopCh := make(chan struct{})
@@ -79,11 +66,11 @@ func main() {
 	log.Println("Starting the nightlight service")
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go service.RunService(*cfgFileArg, stopCh, &wg)
+	go service.RunService(cfgFile, stopCh, &wg)
 
 	if err := createPidFile(); err != nil {
 		stopCh <- struct{}{}
-		log.Fatal("Failed to create PID file")
+		return errors.New("failed to create PID file")
 	}
 
 	// wait to get a signal
@@ -95,6 +82,64 @@ func main() {
 	close(sig)
 
 	if err := deletePidFile(); err != nil {
-		log.Fatal("Failed to delete PID file")
+		return fmt.Errorf("failed to delete PID file: %w", err)
 	}
+
+	return nil
+}
+
+func startServiceProcess(cfg string) error {
+	var procAttr os.ProcAttr
+
+	prog := os.Args[0]
+	if !path.IsAbs(prog) {
+		_prog, err := exec.LookPath(path.Base(prog))
+		if err != nil {
+			return err
+		}
+
+		prog = _prog
+	}
+
+	procAttr.Files = []*os.File{os.Stdin,
+		os.Stdout, os.Stderr}
+	procAttr.Env = os.Environ()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	procAttr.Dir = cwd
+	_, err = os.StartProcess(prog, []string{"--config", cfg, "--svc"}, &procAttr)
+	return err
+}
+
+func main() {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "/usr/local"
+	} else {
+		homeDir = path.Join(homeDir, ".config")
+	}
+
+	cfgFileArg := flag.String("config", path.Join(homeDir, "nightlight.toml"), "--config=[path to config file]")
+	svcArg := flag.Bool("svc", false, "--svc")
+
+	flag.Parse()
+
+	if *cfgFileArg == "" {
+		log.Fatal("No config file specified")
+	}
+
+	if *svcArg {
+		if err := run(*cfgFileArg); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	log.Println("Starting nightlight service process")
+	if err := startServiceProcess(*cfgFileArg); err != nil {
+		log.Fatal(err)
+	}
+
 }

@@ -200,7 +200,7 @@ func getNextImportantTime(t time.Time, coord *coordinates) timeAndTheme {
 		log.Println(err)
 		return nextDefaultTime(t)
 	}
-	firstLight = firstLight.AddDate(t.Year(), int(t.Month()), t.Day())
+	firstLight = firstLight.AddDate(t.Year(), int(t.Month())-1, t.Day()-1)
 
 	log.Printf("First light will be at %s", firstLight.Format(time.DateTime))
 
@@ -213,7 +213,7 @@ func getNextImportantTime(t time.Time, coord *coordinates) timeAndTheme {
 		log.Println(err)
 		return nextDefaultTime(t)
 	}
-	lastLight = lastLight.AddDate(t.Year(), int(t.Month()), t.Day())
+	lastLight = lastLight.AddDate(t.Year(), int(t.Month())-1, t.Day()-1)
 
 	log.Printf("Last light will be %s", lastLight.Format(time.DateTime))
 	if t.Before(lastLight) {
@@ -245,7 +245,7 @@ func getNextImportantTime(t time.Time, coord *coordinates) timeAndTheme {
 		log.Println(err)
 		return timeAndTheme{firstLight.AddDate(0, 0, 1), dark}
 	}
-	firstNextLight = firstNextLight.AddDate(t.Year(), int(t.Month()), t.Day()+1)
+	firstNextLight = firstNextLight.AddDate(t.Year(), int(t.Month())-1, t.Day())
 
 	return timeAndTheme{firstNextLight, dark}
 }
