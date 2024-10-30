@@ -202,20 +202,20 @@ func getNextImportantTime(t time.Time, coord *coordinates) timeAndTheme {
 	}
 	firstLight = firstLight.AddDate(t.Year(), int(t.Month())-1, t.Day()-1)
 
-	log.Printf("First light will be at %s", firstLight.Format(time.DateTime))
+	log.Printf("First light on %s is at %s", t.Format(time.DateOnly), firstLight.Format(time.TimeOnly))
 
 	if t.Before(firstLight) {
 		return timeAndTheme{firstLight, dark}
 	}
 
-	lastLight, err := time.ParseInLocation(timeLayout, jsonquery.FindOne(doc, "/results/astronomical_twilight_end").Value().(string), t.Location())
+	lastLight, err := time.ParseInLocation(timeLayout, jsonquery.FindOne(doc, "/results/civil_twilight_end").Value().(string), t.Location())
 	if err != nil {
 		log.Println(err)
 		return nextDefaultTime(t)
 	}
 	lastLight = lastLight.AddDate(t.Year(), int(t.Month())-1, t.Day()-1)
 
-	log.Printf("Last light will be %s", lastLight.Format(time.DateTime))
+	log.Printf("Last light on %s is at %s", t.Format(time.DateOnly), lastLight.Format(time.TimeOnly))
 	if t.Before(lastLight) {
 		return timeAndTheme{lastLight, light}
 	}

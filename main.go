@@ -10,19 +10,20 @@ import (
 	"os/exec"
 	"os/signal"
 	"path"
+	"strconv"
+	"syscall"
 
 	"sync"
 )
 
-const pidFilename = "nightlight.pid"
+const (
+	heartBeatMsg  = "hb"
+	heartBeatResp = "al"
+	pidFilename   = "nightlight.pid"
+)
 
-func createPidFile() error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-
-	f, err := os.Create(path.Join(cwd, pidFilename))
+func createPidFile(pidFile string) error {
+	f, err := os.Create(pidFile)
 	if err != nil {
 		return err
 	}
@@ -36,20 +37,71 @@ func createPidFile() error {
 	return nil
 }
 
-func deletePidFile() error {
+func otherInstanceExists(pidFile string) bool {
+	_, err := os.Stat(pidFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+
+	if err != nil {
+		return true
+	}
+
+	p, err := os.ReadFile(pidFile)
+	if err != nil {
+		return true
+	}
+
+	pid, err := strconv.ParseInt(string(p), 10, 32)
+	if err != nil {
+		return true
+	}
+
+	proc, _ := os.FindProcess(int(pid))
+	defer proc.Release()
+
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+func stopService() error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
 
-	if err := os.Remove(path.Join(cwd, pidFilename)); err != nil {
+	pidFile := path.Join(cwd, pidFilename)
+	p, err := os.ReadFile(pidFile)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+
 		return err
 	}
 
-	return nil
+	pid, err := strconv.ParseInt(string(p), 10, 32)
+	if err != nil {
+		return err
+	}
+
+	proc, _ := os.FindProcess(int(pid))
+	defer proc.Release()
+
+	return proc.Signal(os.Interrupt)
 }
 
 func run(cfgFile string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	pidFile := path.Join(cwd, pidFilename)
+	if exists := otherInstanceExists(pidFile); exists {
+		return fmt.Errorf("service already exists. Check %s", pidFile)
+	}
+
 	cfg, err := service.FromFile(cfgFile)
 	if err != nil {
 		return err
@@ -68,9 +120,9 @@ func run(cfgFile string) error {
 	wg.Add(1)
 	go service.RunService(cfgFile, stopCh, &wg)
 
-	if err := createPidFile(); err != nil {
+	if err = createPidFile(pidFile); err != nil {
 		stopCh <- struct{}{}
-		return errors.New("failed to create PID file")
+		return fmt.Errorf("failed to create PID file: %w", err)
 	}
 
 	// wait to get a signal
@@ -81,7 +133,7 @@ func run(cfgFile string) error {
 	close(stopCh)
 	close(sig)
 
-	if err := deletePidFile(); err != nil {
+	if err := os.Remove(pidFile); err != nil {
 		return fmt.Errorf("failed to delete PID file: %w", err)
 	}
 
@@ -89,8 +141,6 @@ func run(cfgFile string) error {
 }
 
 func startServiceProcess(cfg string) error {
-	var procAttr os.ProcAttr
-
 	prog := os.Args[0]
 	if !path.IsAbs(prog) {
 		_prog, err := exec.LookPath(path.Base(prog))
@@ -101,17 +151,14 @@ func startServiceProcess(cfg string) error {
 		prog = _prog
 	}
 
-	procAttr.Files = []*os.File{os.Stdin,
-		os.Stdout, os.Stderr}
-	procAttr.Env = os.Environ()
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
+	c := exec.Command(prog, "--config", cfg, "--svc")
+	defer func() {
+		if c.Process != nil {
+			c.Process.Release()
+		}
+	}()
 
-	procAttr.Dir = cwd
-	_, err = os.StartProcess(prog, []string{"--config", cfg, "--svc"}, &procAttr)
-	return err
+	return c.Start()
 }
 
 func main() {
@@ -124,8 +171,16 @@ func main() {
 
 	cfgFileArg := flag.String("config", path.Join(homeDir, "nightlight.toml"), "--config=[path to config file]")
 	svcArg := flag.Bool("svc", false, "--svc")
+	stopSvcArg := flag.Bool("stop", false, "--stop")
 
 	flag.Parse()
+
+	if *stopSvcArg {
+		if err := stopService(); err != nil {
+			log.Fatal(err)
+		}
+		os.Exit(0)
+	}
 
 	if *cfgFileArg == "" {
 		log.Fatal("No config file specified")
@@ -135,6 +190,7 @@ func main() {
 		if err := run(*cfgFileArg); err != nil {
 			log.Fatal(err)
 		}
+		os.Exit(0)
 	}
 
 	log.Println("Starting nightlight service process")

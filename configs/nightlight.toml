@@ -1,0 +1,4 @@
+Location="Poole,GB"
+APIKey="${your OpenWeatherMap key}"
+DayTheme="org.kde.breezetwilight.desktop"
+NightTheme="org.kde.breezedark.desktop"
