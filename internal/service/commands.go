@@ -21,7 +21,9 @@ func applyTheme(t string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := exec.CommandContext(ctx, "lookandfeeltool", "--apply", t).Run(); err != nil {
+	log.Printf("Applying theme '%s'", t)
+	p := exec.CommandContext(ctx, "lookandfeeltool", "--apply", t)
+	if err := p.Run(); err != nil {
 		return err
 	}
 

@@ -14,6 +14,8 @@ import (
 	"syscall"
 
 	"sync"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -92,12 +94,16 @@ func stopService() error {
 }
 
 func run(cfgFile string) error {
-	cwd, err := os.Getwd()
+	lockDir := "/var/lock"
+	fi, err := os.Stat(lockDir)
 	if err != nil {
 		return err
 	}
+	if fi.IsDir() {
+		return syscall.ENOTDIR
+	}
 
-	pidFile := path.Join(cwd, pidFilename)
+	pidFile := path.Join(lockDir, pidFilename)
 	if exists := otherInstanceExists(pidFile); exists {
 		return fmt.Errorf("service already exists. Check %s", pidFile)
 	}
@@ -161,17 +167,52 @@ func startServiceProcess(cfg string) error {
 	return c.Start()
 }
 
-func main() {
-	homeDir, err := os.UserHomeDir()
+func isDirAndReadable(dir string) error {
+	fi, err := os.Stat(dir)
 	if err != nil {
-		homeDir = "/usr/local"
-	} else {
-		homeDir = path.Join(homeDir, ".config")
+		return err
+	}
+	if !fi.IsDir() {
+		return syscall.ENOTDIR
+	}
+	if err := unix.Access(dir, unix.R_OK); err != nil {
+		return err
 	}
 
-	cfgFileArg := flag.String("config", path.Join(homeDir, "nightlight.toml"), "--config=[path to config file]")
-	svcArg := flag.Bool("svc", false, "--svc")
-	stopSvcArg := flag.Bool("stop", false, "--stop")
+	return nil
+}
+
+// Will return in order (first one that exists and is readable)
+// - $HOME/.config/nightlight
+// - /usr/local/share/nightlight
+func getConfigDir() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "/usr/local/share/nightlight"
+		if err = isDirAndReadable(homeDir); err != nil {
+			return "", err
+		}
+
+		return homeDir, nil
+	}
+
+	homeDir = path.Join(homeDir, ".config", "nightlight")
+	if err = isDirAndReadable(homeDir); err != nil {
+		return "", err
+	}
+
+	return homeDir, err
+}
+
+func main() {
+	cfgDir, err := getConfigDir()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cfgFileArg := flag.String("config", path.Join(cfgDir, "nightlight.toml"), "-config=[path to config file]")
+	svcArg := flag.Bool("svc", false, "Run as a service")
+	stopSvcArg := flag.Bool("stop", false, "Stops the service")
 
 	flag.Parse()
 
