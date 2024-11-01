@@ -101,16 +101,16 @@ func getCoordinatesLocation(loc locationName, apiKey string) (coordinates, error
 	return coordinates{float32(lat), float32(lon)}, nil
 }
 
-type theme int
+type Theme int
 
 const (
-	light theme = 1
-	dark  theme = 2
+	light Theme = 1
+	dark  Theme = 2
 )
 
-type timeAndTheme struct {
-	start time.Time
-	theme theme
+type TimeAndTheme struct {
+	Start time.Time
+	Theme Theme
 }
 
 // Before $sunrise, returns $sunrise
@@ -118,7 +118,7 @@ type timeAndTheme struct {
 // After $sunset, returns $sunrise the next day
 //
 // Also returns the theme to be set *UNTIL* the returned time
-func nextDefaultTime(t time.Time) timeAndTheme {
+func NextDefaultTime(t time.Time) TimeAndTheme {
 	sunrise := 8
 	sunset := 18
 
@@ -138,15 +138,15 @@ func nextDefaultTime(t time.Time) timeAndTheme {
 		next = next.AddDate(0, 0, 1)
 	}
 
-	return timeAndTheme{next, th}
+	return TimeAndTheme{next, th}
 }
 
 // exactly as the func above, but uses the Sunset-sunrise API to get the corect times
-func getNextImportantTime(t time.Time, coord *coordinates) timeAndTheme {
+func GetNextImportantTime(t time.Time, coord *coordinates) TimeAndTheme {
 	tmpl, err := template.New("SunsetSunriseAPI").Parse(sunriseSunsetAPI)
 	if err != nil {
 		log.Println(err)
-		return nextDefaultTime(t)
+		return NextDefaultTime(t)
 	}
 
 	var forCurrentT, forTPlus1 struct {
@@ -168,96 +168,96 @@ func getNextImportantTime(t time.Time, coord *coordinates) timeAndTheme {
 	err = tmpl.Execute(requestForT, forCurrentT)
 	if err != nil {
 		log.Println(err)
-		return nextDefaultTime(t)
+		return NextDefaultTime(t)
 	}
 
 	requestForTPlus1 := new(bytes.Buffer)
 	err = tmpl.Execute(requestForTPlus1, forTPlus1)
 	if err != nil {
 		log.Println(err)
-		return nextDefaultTime(t)
+		return NextDefaultTime(t)
 	}
 
 	client := http.Client{}
 	r, err := client.Get(requestForT.String())
 	if err != nil {
 		log.Println(err)
-		return nextDefaultTime(t)
+		return NextDefaultTime(t)
 	}
 
 	if r.StatusCode < 200 || r.StatusCode > 299 {
 		log.Println("error response from OpenWetherMap")
-		return nextDefaultTime(t)
+		return NextDefaultTime(t)
 	}
 
 	doc, err := jsonquery.Parse(r.Body)
 	if err != nil {
 		log.Println(err)
-		return nextDefaultTime(t)
+		return NextDefaultTime(t)
 	}
 
 	const timeLayout = "3:04:05 PM" // go time formatting is **WILD**
 	firstLight, err := time.ParseInLocation(timeLayout, jsonquery.FindOne(doc, "/results/civil_twilight_begin").Value().(string), t.Location())
 	if err != nil {
 		log.Println(err)
-		return nextDefaultTime(t)
+		return NextDefaultTime(t)
 	}
 	firstLight = firstLight.AddDate(t.Year(), int(t.Month())-1, t.Day()-1)
 
 	log.Printf("First light on %s is at %s", t.Format(time.DateOnly), firstLight.Format(time.TimeOnly))
 
 	if t.Before(firstLight) {
-		return timeAndTheme{firstLight, dark}
+		return TimeAndTheme{firstLight, dark}
 	}
 
 	lastLight, err := time.ParseInLocation(timeLayout, jsonquery.FindOne(doc, "/results/civil_twilight_end").Value().(string), t.Location())
 	if err != nil {
 		log.Println(err)
-		return nextDefaultTime(t)
+		return NextDefaultTime(t)
 	}
 	lastLight = lastLight.AddDate(t.Year(), int(t.Month())-1, t.Day()-1)
 
 	log.Printf("Last light on %s is at %s", t.Format(time.DateOnly), lastLight.Format(time.TimeOnly))
 	if t.Before(lastLight) {
-		return timeAndTheme{lastLight, light}
+		return TimeAndTheme{lastLight, light}
 	}
 
 	// First light for next day
 	r, err = client.Get(requestForTPlus1.String())
 	if err != nil {
 		log.Println(err)
-		return timeAndTheme{firstLight.AddDate(0, 0, 1), dark}
+		return TimeAndTheme{firstLight.AddDate(0, 0, 1), dark}
 	}
 
 	if r.StatusCode < 200 || r.StatusCode > 299 {
 		log.Println("error response from OpenWetherMap")
-		return timeAndTheme{firstLight.AddDate(0, 0, 1), dark}
+		return TimeAndTheme{firstLight.AddDate(0, 0, 1), dark}
 
 	}
 
 	doc, err = jsonquery.Parse(r.Body)
 	if err != nil {
 		log.Println(err)
-		return timeAndTheme{firstLight.AddDate(0, 0, 1), dark}
+		return TimeAndTheme{firstLight.AddDate(0, 0, 1), dark}
 
 	}
 
 	firstNextLight, err := time.ParseInLocation(timeLayout, jsonquery.FindOne(doc, "/results/civil_twilight_begin").Value().(string), t.Location())
 	if err != nil {
 		log.Println(err)
-		return timeAndTheme{firstLight.AddDate(0, 0, 1), dark}
+		return TimeAndTheme{firstLight.AddDate(0, 0, 1), dark}
 	}
 	firstNextLight = firstNextLight.AddDate(t.Year(), int(t.Month())-1, t.Day())
 
-	return timeAndTheme{firstNextLight, dark}
+	return TimeAndTheme{firstNextLight, dark}
 }
 
-func RunService(cf string, stopChan chan struct{}, wg *sync.WaitGroup) {
+func serviceLoop(cf string, stopChan chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 	prevLoc := ""
 	coord := coordinates{}
 
-serviceLoop:
+serviceLoopLabel:
 	for {
 		cfg, err := readConfig(cf)
 		if err != nil {
@@ -273,19 +273,19 @@ serviceLoop:
 			}
 		}
 
-		tt := getNextImportantTime(time.Now(), &coord)
+		tt := GetNextImportantTime(time.Now(), &coord)
 
-		if tt.theme == light {
+		if tt.Theme == light {
 			applyTheme(cfg.DayTheme)
 		} else {
 			applyTheme(cfg.NightTheme)
 		}
 
-		log.Printf("Next time theme will change %s", tt.start.Format(time.DateTime))
+		log.Printf("Next time theme will change %s", tt.Start.Format(time.DateTime))
 
 		sleepCh := make(chan struct{})
 		go func() {
-			time.Sleep(time.Until(tt.start))
+			time.Sleep(time.Until(tt.Start))
 			sleepCh <- struct{}{}
 		}()
 
@@ -294,7 +294,7 @@ serviceLoop:
 			continue
 		case <-stopChan:
 			fmt.Println("Stopping service")
-			break serviceLoop
+			break serviceLoopLabel
 		}
 	}
 }

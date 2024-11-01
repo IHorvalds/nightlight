@@ -2,7 +2,8 @@ package service
 
 import (
 	"context"
-	"log"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"slices"
@@ -11,6 +12,11 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 )
+
+const EmptyConfig = `Location=
+APIKey=
+DayTheme=
+NightTheme=`
 
 type Config struct {
 	DayTheme   string // as reported by lookandfeeltool
@@ -47,16 +53,23 @@ func FromFile(f string) (*Config, error) {
 	return cfg, nil
 }
 
-func (c *Config) ValidateConfig() bool {
-	if _, err := getCoordinatesLocation(locationName(c.Location), c.APIKey); err != nil {
-		log.Println(err)
-		return false
+func (c *Config) ValidateConfig() error {
+	if c.Location == "" {
+		return errors.New("empty location name")
 	}
 
-	if themes, err := getThemeList(); err != nil ||
-		!slices.Contains(themes, c.DayTheme) || !slices.Contains(themes, c.NightTheme) {
-		return false
+	themes, err := getThemeList()
+	if err != nil {
+		return err
 	}
 
-	return true
+	if !slices.Contains(themes, c.DayTheme) {
+		return fmt.Errorf("theme '%s' does not exist", c.DayTheme)
+	}
+
+	if !slices.Contains(themes, c.NightTheme) {
+		return fmt.Errorf("theme '%s' does not exist", c.NightTheme)
+	}
+
+	return nil
 }
