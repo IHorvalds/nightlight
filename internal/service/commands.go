@@ -17,6 +17,9 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+var ThemeApplicator = applyTheme
+var GetNextImportantTime = getNextImportantTime
+
 func applyTheme(t string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -30,7 +33,7 @@ func applyTheme(t string) error {
 	return nil
 }
 
-func readConfig(cf string) (*Config, error) {
+func ReadConfig(cf string) (*Config, error) {
 	b, err := os.ReadFile(cf)
 	if err != nil {
 		return nil, err
@@ -48,17 +51,17 @@ const (
 	sunriseSunsetAPI = "https://api.sunrise-sunset.org/json?lat={{.Lat}}&lng={{.Long}}&date={{.Date}}&tzid={{.Tzid}}"
 )
 
-type coordinates struct {
+type Coordinates struct {
 	latitude  float32
 	longitude float32
 }
 
 type locationName string
 
-func getCoordinatesLocation(loc locationName, apiKey string) (coordinates, error) {
+func getCoordinatesLocation(loc locationName, apiKey string) (Coordinates, error) {
 	tmpl, err := template.New("LocationAPI").Parse(geocodingURL)
 	if err != nil {
-		return coordinates{0, 0}, err
+		return Coordinates{0, 0}, err
 	}
 
 	url := new(bytes.Buffer)
@@ -70,35 +73,35 @@ func getCoordinatesLocation(loc locationName, apiKey string) (coordinates, error
 		apiKey,
 	})
 	if err != nil {
-		return coordinates{0, 0}, err
+		return Coordinates{0, 0}, err
 	}
 
 	log.Printf("Trying %s", url.String())
 
 	r, err := http.Get(url.String())
 	if err != nil {
-		return coordinates{0, 0}, err
+		return Coordinates{0, 0}, err
 	}
 
 	if r.StatusCode < 200 || r.StatusCode > 299 {
-		return coordinates{0, 0}, errors.New("error response from OpenWetherMap")
+		return Coordinates{0, 0}, errors.New("error response from OpenWetherMap")
 	}
 
 	doc, err := jsonquery.Parse(r.Body)
 	if err != nil {
-		return coordinates{0, 0}, err
+		return Coordinates{0, 0}, err
 	}
 
 	lat, ok := jsonquery.FindOne(doc, "*[1]/lat").Value().(float64)
 	if !ok {
-		return coordinates{0, 0}, errors.New("invalid JSON response from OpenWeatherMap")
+		return Coordinates{0, 0}, errors.New("invalid JSON response from OpenWeatherMap")
 	}
 	lon, ok := jsonquery.FindOne(doc, "*[1]/lon").Value().(float64)
 	if !ok {
-		return coordinates{0, 0}, errors.New("invalid JSON response from OpenWeatherMap")
+		return Coordinates{0, 0}, errors.New("invalid JSON response from OpenWeatherMap")
 	}
 
-	return coordinates{float32(lat), float32(lon)}, nil
+	return Coordinates{float32(lat), float32(lon)}, nil
 }
 
 type Theme int
@@ -142,7 +145,7 @@ func NextDefaultTime(t time.Time) TimeAndTheme {
 }
 
 // exactly as the func above, but uses the Sunset-sunrise API to get the corect times
-func GetNextImportantTime(t time.Time, coord *coordinates) TimeAndTheme {
+func getNextImportantTime(t time.Time, coord *Coordinates) TimeAndTheme {
 	tmpl, err := template.New("SunsetSunriseAPI").Parse(sunriseSunsetAPI)
 	if err != nil {
 		log.Println(err)
@@ -252,14 +255,14 @@ func GetNextImportantTime(t time.Time, coord *coordinates) TimeAndTheme {
 	return TimeAndTheme{firstNextLight, dark}
 }
 
-func serviceLoop(cf string, stopChan chan struct{}, wg *sync.WaitGroup) {
+func ServiceLoop(cf string, stopChan chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 	prevLoc := ""
-	coord := coordinates{}
+	coord := Coordinates{}
 
 serviceLoopLabel:
 	for {
-		cfg, err := readConfig(cf)
+		cfg, err := ReadConfig(cf)
 		if err != nil {
 			log.Fatal("Failed to read config file. Bailing")
 		}
@@ -276,25 +279,18 @@ serviceLoopLabel:
 		tt := GetNextImportantTime(time.Now(), &coord)
 
 		if tt.Theme == light {
-			applyTheme(cfg.DayTheme)
+			ThemeApplicator(cfg.DayTheme)
 		} else {
-			applyTheme(cfg.NightTheme)
+			ThemeApplicator(cfg.NightTheme)
 		}
 
 		log.Printf("Next time theme will change %s", tt.Start.Format(time.DateTime))
 
-		sleepCh := make(chan struct{})
-		go func() {
-			time.Sleep(time.Until(tt.Start))
-			sleepCh <- struct{}{}
-		}()
-
 		select {
-		case <-sleepCh:
-			continue
 		case <-stopChan:
 			fmt.Println("Stopping service")
 			break serviceLoopLabel
+		case <-time.After(time.Until(tt.Start)):
 		}
 	}
 }

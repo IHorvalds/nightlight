@@ -55,7 +55,7 @@ func RunService(cfgFile string) error {
 	log.Println("Starting the nightlight service")
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go serviceLoop(cfgFile, stopCh, &wg)
+	go ServiceLoop(cfgFile, stopCh, &wg)
 
 	// wait to get a signal
 	<-sig
