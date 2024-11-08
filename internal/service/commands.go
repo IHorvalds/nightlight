@@ -17,9 +17,6 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-var ThemeApplicator = applyTheme
-var GetNextImportantTime = getNextImportantTime
-
 func applyTheme(t string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -107,13 +104,13 @@ func getCoordinatesLocation(loc locationName, apiKey string) (Coordinates, error
 type Theme int
 
 const (
-	light Theme = 1
-	dark  Theme = 2
+	Light Theme = 1
+	Dark  Theme = 2
 )
 
 type TimeAndTheme struct {
-	Start time.Time
-	Theme Theme
+	NextStart time.Time
+	Theme     Theme
 }
 
 // Before $sunrise, returns $sunrise
@@ -125,17 +122,16 @@ func NextDefaultTime(t time.Time) TimeAndTheme {
 	sunrise := 8
 	sunset := 18
 
-	if t.Local().Month() >= time.March && t.Local().Month() < time.October {
+	if t.Local().IsDST() {
 		sunrise = 6
 		sunset = 21
-
 	}
 
-	th := dark
+	th := Dark
 	next := time.Date(t.Year(), t.Month(), t.Day(), sunrise, 0, 0, 0, t.Location())
 	if t.Hour() >= sunrise && t.Hour() < sunset {
 		next = next.Add(time.Hour * time.Duration(sunset-sunrise))
-		th = light
+		th = Light
 	}
 	if t.Hour() >= sunset {
 		next = next.AddDate(0, 0, 1)
@@ -207,10 +203,10 @@ func getNextImportantTime(t time.Time, coord *Coordinates) TimeAndTheme {
 	}
 	firstLight = firstLight.AddDate(t.Year(), int(t.Month())-1, t.Day()-1)
 
-	log.Printf("First light on %s is at %s", t.Format(time.DateOnly), firstLight.Format(time.TimeOnly))
+	log.Printf("First Light on %s is at %s", t.Format(time.DateOnly), firstLight.Format(time.TimeOnly))
 
 	if t.Before(firstLight) {
-		return TimeAndTheme{firstLight, dark}
+		return TimeAndTheme{firstLight, Dark}
 	}
 
 	lastLight, err := time.ParseInLocation(timeLayout, jsonquery.FindOne(doc, "/results/civil_twilight_end").Value().(string), t.Location())
@@ -220,39 +216,39 @@ func getNextImportantTime(t time.Time, coord *Coordinates) TimeAndTheme {
 	}
 	lastLight = lastLight.AddDate(t.Year(), int(t.Month())-1, t.Day()-1)
 
-	log.Printf("Last light on %s is at %s", t.Format(time.DateOnly), lastLight.Format(time.TimeOnly))
+	log.Printf("Last Light on %s is at %s", t.Format(time.DateOnly), lastLight.Format(time.TimeOnly))
 	if t.Before(lastLight) {
-		return TimeAndTheme{lastLight, light}
+		return TimeAndTheme{lastLight, Light}
 	}
 
-	// First light for next day
+	// First Light for next day
 	r, err = client.Get(requestForTPlus1.String())
 	if err != nil {
 		log.Println(err)
-		return TimeAndTheme{firstLight.AddDate(0, 0, 1), dark}
+		return TimeAndTheme{firstLight.AddDate(0, 0, 1), Dark}
 	}
 
 	if r.StatusCode < 200 || r.StatusCode > 299 {
 		log.Println("error response from OpenWetherMap")
-		return TimeAndTheme{firstLight.AddDate(0, 0, 1), dark}
+		return TimeAndTheme{firstLight.AddDate(0, 0, 1), Dark}
 
 	}
 
 	doc, err = jsonquery.Parse(r.Body)
 	if err != nil {
 		log.Println(err)
-		return TimeAndTheme{firstLight.AddDate(0, 0, 1), dark}
+		return TimeAndTheme{firstLight.AddDate(0, 0, 1), Dark}
 
 	}
 
 	firstNextLight, err := time.ParseInLocation(timeLayout, jsonquery.FindOne(doc, "/results/civil_twilight_begin").Value().(string), t.Location())
 	if err != nil {
 		log.Println(err)
-		return TimeAndTheme{firstLight.AddDate(0, 0, 1), dark}
+		return TimeAndTheme{firstLight.AddDate(0, 0, 1), Dark}
 	}
 	firstNextLight = firstNextLight.AddDate(t.Year(), int(t.Month())-1, t.Day())
 
-	return TimeAndTheme{firstNextLight, dark}
+	return TimeAndTheme{firstNextLight, Dark}
 }
 
 func ServiceLoop(cf string, stopChan chan struct{}, wg *sync.WaitGroup) {
@@ -276,21 +272,21 @@ serviceLoopLabel:
 			}
 		}
 
-		tt := GetNextImportantTime(time.Now(), &coord)
+		tt := getNextImportantTime(time.Now(), &coord)
 
-		if tt.Theme == light {
-			ThemeApplicator(cfg.DayTheme)
+		if tt.Theme == Light {
+			applyTheme(cfg.DayTheme)
 		} else {
-			ThemeApplicator(cfg.NightTheme)
+			applyTheme(cfg.NightTheme)
 		}
 
-		log.Printf("Next time theme will change %s", tt.Start.Format(time.DateTime))
+		log.Printf("Next time theme will change %s", tt.NextStart.Format(time.DateTime))
 
 		select {
 		case <-stopChan:
 			fmt.Println("Stopping service")
 			break serviceLoopLabel
-		case <-time.After(time.Until(tt.Start)):
+		case <-time.After(time.Until(tt.NextStart)):
 		}
 	}
 }
