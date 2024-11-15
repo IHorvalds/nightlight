@@ -22,6 +22,15 @@ func applyTheme(t string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	b, err := exec.CommandContext(ctx, "kreadconfig6", "--key", "LookAndFeelPackage").Output()
+	if err != nil && errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return err
+	}
+
+	if string(b) == t {
+		return nil
+	}
+
 	log.Printf("Applying theme '%s'", t)
 	p := exec.CommandContext(ctx, "lookandfeeltool", "--apply", t)
 	if err := p.Run(); err != nil {
