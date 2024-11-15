@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	dbuslistener "nightlight/internal/dbus-listener"
 	"os"
 	"os/exec"
 	"sync"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	"github.com/antchfx/jsonquery"
-	"github.com/godbus/dbus/v5"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -265,11 +265,12 @@ serviceLoopLabel:
 		}
 
 		if prevLoc != cfg.Location {
-			coord, err = getCoordinatesLocation(locationName(cfg.Location), cfg.APIKey)
+			newCoord, err := getCoordinatesLocation(locationName(cfg.Location), cfg.APIKey)
 			if err != nil {
 				log.Printf("Failed to get coordinates for %s", cfg.Location)
 			} else {
 				prevLoc = cfg.Location
+				coord = newCoord
 			}
 		}
 
@@ -283,11 +284,11 @@ serviceLoopLabel:
 
 		log.Printf("Next time theme will change %s", tt.NextStart.Format(time.DateTime))
 
-		conn, err := dbus.ConnectSystemBus()
+		listener, err := dbuslistener.Connect()
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("Failed to create DBus Listener: %s", err)
 		}
-		defer conn.Close()
+		defer listener.Close()
 
 		select {
 		case <-stopChan:
@@ -295,35 +296,8 @@ serviceLoopLabel:
 			break serviceLoopLabel
 		case <-time.After(time.Until(tt.NextStart)):
 			log.Printf("Timer expired at %s (expected %s)", time.Now(), tt.NextStart)
-		case <-wokeFromSleep(conn):
+		case <-dbuslistener.WokeFromSleepWithNetwork(listener):
 			log.Printf("Woke from sleep at %s", time.Now())
 		}
 	}
-}
-
-func wokeFromSleep(conn *dbus.Conn) <-chan struct{} {
-	if err := conn.AddMatchSignal(
-		dbus.WithMatchMember("PrepareForSleep"),
-		dbus.WithMatchInterface("org.freedesktop.login1.Manager"),
-		dbus.WithMatchSender("org.freedesktop.login1"),
-	); err != nil {
-		panic(err)
-	}
-
-	c := make(chan struct{}, 1)
-	go func() {
-		dbc := make(chan *dbus.Signal, 1)
-		conn.Signal(dbc)
-		for s := range dbc {
-			if len(s.Body) < 1 {
-				continue
-			}
-
-			if goingToSleep, ok := s.Body[0].(bool); ok && !goingToSleep {
-				c <- struct{}{}
-			}
-		}
-	}()
-
-	return c
 }
