@@ -35,10 +35,13 @@ func startServiceProcess(cfg string) error {
 func main() {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		homeDir = "/etc/share/"
+	} else {
+		homeDir = path.Join(homeDir, ".config")
 	}
 
-	cfgFileArg := flag.String("config", path.Join(homeDir, ".config", "nightlight", "nightlight.toml"), "-config=[path to config file]")
+	cfgFileArg := flag.String("config", path.Join(homeDir, "nightlight", "nightlight.toml"), "-config=[path to config file]")
 	svcArg := flag.Bool("svc", false, "Run as a service")
 	stopSvcArg := flag.Bool("stop", false, "Stops the service")
 
